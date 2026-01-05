@@ -5,217 +5,246 @@
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Phone Proxy</title>
 <script src="/peer.js"></script>
-
 <style>
-body {
-  margin:0;
-  background:#121212;
-  color:#eee;
-  font-family:system-ui,sans-serif;
-  text-align:center;
-}
-.centerBox {
-  position:absolute;
-  top:50%;
-  left:50%;
-  transform:translate(-50%,-50%);
-  background:#1e1e1e;
-  border:1px solid #333;
-  border-radius:12px;
-  padding:2rem;
-  width:90%;
-  max-width:380px;
-  box-shadow:0 4px 12px rgba(0,0,0,0.3);
-}
-#connectedUI {display:none;height:100vh;flex-direction:column;}
-#topbar {display:flex;gap:0.5rem;padding:0.5rem;background:#1e1e1e;border-bottom:1px solid #333;}
-#urlInput {flex:1;padding:0.5rem;border-radius:6px;border:1px solid #555;background:#2a2a2a;color:#eee;}
-#sendBtn {padding:0.45rem 0.8rem;border-radius:6px;border:none;background:#0b74de;color:white;cursor:pointer;}
-#browserHost {flex:1;overflow:auto;background:white;}
+  body {
+    margin:0;
+    background:#121212;
+    color:#eee;
+    font-family:system-ui,sans-serif;
+    text-align:center;
+  }
+
+  .centerBox {
+    position:absolute;
+    top:50%;
+    left:50%;
+    transform:translate(-50%, -50%);
+    background:#1e1e1e;
+    border:1px solid #333;
+    border-radius:12px;
+    padding:2rem;
+    width:90%;
+    max-width:380px;
+    box-shadow:0 4px 12px rgba(0,0,0,0.3);
+  }
+
+  input, button {
+    font-size:1rem;
+    padding:0.6rem 0.8rem;
+    border-radius:8px;
+    border:none;
+    margin:0.5rem 0;
+    width:100%;
+    box-sizing:border-box;
+  }
+
+  input { background:#2a2a2a; color:#eee; }
+  button { background:#0b74de; color:white; cursor:pointer; }
+  button:hover { background:#095ab0; }
+
+  #connectedUI {
+    display:none;
+    height:100vh;
+    width:100vw;
+    background:#111;
+    display:flex;
+    flex-direction:column;
+  }
+
+  #topbar {
+    display:flex;
+    padding:0.5rem;
+    background:#1e1e1e;
+    border-bottom:1px solid #333;
+  }
+
+  #urlInput {
+    flex:1;
+    margin-right:0.5rem;
+    border-radius:6px;
+  }
+
+  #browser {
+    flex:1;
+    overflow:auto;
+    padding:1rem;
+    background:#111;
+    text-align:left;
+  }
+
+  .link {
+    color:#4aa3ff;
+    cursor:pointer;
+    margin-top:0.8rem;
+    display:inline-block;
+  }
+
+  #browser iframe {
+    width:100%;
+    height:100%;
+    border:none;
+  }
 </style>
 </head>
 <body>
 
-<div class="centerBox" id="phoneUI" hidden>
-  <h1>Your Code</h1>
-  <div style="font-size:2rem;font-weight:bold;margin:1rem 0;" id="phoneCode">------</div>
+<!-- PHONE UI -->
+<div class="centerBox" id="phoneUI">
+  <h2>Your Code</h2>
+  <div id="phoneCode" style="font-size:2rem;font-weight:bold;margin:1rem 0;">------</div>
   <button id="resetCodeBtn">Reset Code</button>
+  <div class="link" id="switchToComputer">I'm not on mobile</div>
 </div>
 
-<div id="phoneConnectedUI" hidden>
-  <div style="padding:1rem;background:#111;border-bottom:1px solid #333;display:flex;justify-content:space-between;">
-    <div><div>Connected ✓</div><div id="uptime">Uptime 0s</div></div>
-    <button id="disconnectBtn">Disconnect</button>
-  </div>
-  <div id="requestLog" style="padding:1rem;text-align:left;font-size:0.9rem;"></div>
-</div>
-
-<div class="centerBox" id="computerUI" hidden>
-  <h1>Enter Phone Code</h1>
+<!-- COMPUTER UI -->
+<div class="centerBox" id="computerUI">
+  <h2>Enter Phone Code</h2>
   <input id="codeInput" maxlength="6" placeholder="6-digit code"/>
   <button id="connectBtn" disabled>Connect</button>
+  <div class="link" id="switchToPhone">I'm not on phone</div>
 </div>
 
+<!-- CONNECTED UI -->
 <div id="connectedUI">
   <div id="topbar">
     <input id="urlInput" placeholder="Enter URL"/>
     <button id="sendBtn">Go</button>
   </div>
-  <div id="browserHost"></div>
+  <div id="browser"></div>
 </div>
 
 <script>
 (() => {
-let role=/Mobi|Android/i.test(navigator.userAgent)?"phone":"computer";
-let peer=null,conn=null,myCode=null,uptimeTimer=null,connectTime=null,lastUrl=null;
+  const phoneUI = document.getElementById('phoneUI');
+  const computerUI = document.getElementById('computerUI');
+  const connectedUI = document.getElementById('connectedUI');
+  const phoneCodeEl = document.getElementById('phoneCode');
+  const resetCodeBtn = document.getElementById('resetCodeBtn');
+  const switchToComputer = document.getElementById('switchToComputer');
+  const switchToPhone = document.getElementById('switchToPhone');
+  const codeInput = document.getElementById('codeInput');
+  const connectBtn = document.getElementById('connectBtn');
+  const urlInput = document.getElementById('urlInput');
+  const sendBtn = document.getElementById('sendBtn');
+  const browserEl = document.getElementById('browser');
 
-const phoneUI=phoneUI=document.getElementById("phoneUI");
-const phoneConnectedUI=document.getElementById("phoneConnectedUI");
-const phoneCodeEl=document.getElementById("phoneCode");
-const resetCodeBtn=document.getElementById("resetCodeBtn");
-const uptimeEl=document.getElementById("uptime");
-const requestLog=document.getElementById("requestLog");
-const disconnectBtn=document.getElementById("disconnectBtn");
+  let peer = null;
+  let conn = null;
+  let myCode = null;
+  let role = /Mobi|Android/i.test(navigator.userAgent) ? 'phone' : 'computer';
 
-const computerUI=document.getElementById("computerUI");
-const connectedUI=document.getElementById("connectedUI");
-const codeInput=document.getElementById("codeInput");
-const connectBtn=document.getElementById("connectBtn");
-const urlInput=document.getElementById("urlInput");
-const sendBtn=document.getElementById("sendBtn");
-const browserHost=document.getElementById("browserHost");
-
-const shadowRoot = browserHost.attachShadow({mode:"open"});
-
-function resetUI(){
-  phoneUI.hidden=true;
-  phoneConnectedUI.hidden=true;
-  computerUI.hidden=true;
-  connectedUI.style.display="none";
-}
-
-function showPhoneCode(){resetUI();phoneUI.hidden=false;}
-function showPhoneConnected(){resetUI();phoneConnectedUI.hidden=false;}
-function showComputer(){resetUI();computerUI.hidden=false;}
-function showComputerConnected(){resetUI();connectedUI.style.display="flex";}
-
-function initPeer(id){
-  if(peer) return;
-  peer=new Peer(id);
-  peer.on("connection",c=>{conn=c;wireConn();});
-}
-
-function wireConn(){
-  conn.on("open",onConnected);
-  conn.on("data",onData);
-  conn.on("close",onDisconnected);
-}
-
-function onConnected(){
-  connectTime=Date.now();
-  if(role==="phone"){
-    showPhoneConnected();
-    uptimeTimer=setInterval(()=>uptimeEl.textContent="Uptime "+Math.floor((Date.now()-connectTime)/1000)+"s",1000);
-  } else showComputerConnected();
-}
-
-function onDisconnected(){
-  if(uptimeTimer){clearInterval(uptimeTimer);uptimeTimer=null;}
-  conn=null;
-  role==="phone"?showPhoneCode():showComputer();
-}
-
-async function onData(d){
-  if(role==="phone" && d.type==="fetch-request"){
-    const row=document.createElement("div");
-    row.textContent=d.url+" ...";
-    requestLog.prepend(row);
-
-    try{
-      const r=await fetch("https://corsproxy.io/?"+encodeURIComponent(d.url));
-      const buf=await r.arrayBuffer();
-      conn.send({type:"fetch-response",body:buf,url:d.url,ctype:r.headers.get("content-type")});
-      row.textContent=d.url+" ✓";
-    }catch(e){
-      conn.send({type:"fetch-response",body:null,error:String(e),url:d.url});
-      row.textContent=d.url+" ✗";
-    }
+  function resetUI() {
+    phoneUI.style.display = "none";
+    computerUI.style.display = "none";
+    connectedUI.style.display = "none";
   }
 
-  if(role==="computer" && d.type==="fetch-response"){
-    if(d.ctype && !d.ctype.includes("text/html")){
-      const blob=new Blob([d.body],{type:d.ctype});
-      const url=URL.createObjectURL(blob);
-      pendingResourceResolvers[d.url]?.(url);
-      delete pendingResourceResolvers[d.url];
-    } else {
-      renderPage(new TextDecoder().decode(d.body), d.url);
+  function getOrCreateCode(reset=false) {
+    if (!reset && myCode) return myCode;
+    myCode = localStorage.getItem("phoneCode");
+    if (!myCode || reset) {
+      myCode = String(Math.floor(100000 + Math.random() * 900000));
+      localStorage.setItem("phoneCode", myCode);
     }
+    return myCode;
   }
-}
 
-const pendingResourceResolvers={};
+  function showPhoneUI() {
+    role = 'phone';
+    resetUI();
+    phoneUI.style.display = "block";
+    phoneCodeEl.textContent = getOrCreateCode();
+    setupPeer(getOrCreateCode());
+  }
 
-function requestUrl(url){
-  if(!conn) return;
-  lastUrl=url;
-  shadowRoot.innerHTML="<p style='font-family:sans-serif;padding:1rem'>Loading…</p>";
-  conn.send({type:"fetch-request",url});
-}
+  function showComputerUI() {
+    role = 'computer';
+    resetUI();
+    computerUI.style.display = "block";
+    setupPeer();
+  }
 
-function proxyUrl(url){
-  return new Promise(res=>{
-    pendingResourceResolvers[url]=res;
-    conn.send({type:"fetch-request",url});
+  function showConnectedUI() {
+    resetUI();
+    connectedUI.style.display = "flex";
+  }
+
+  resetCodeBtn.onclick = () => showPhoneUI(true);
+  switchToComputer.onclick = showComputerUI;
+  switchToPhone.onclick = showPhoneUI;
+
+  codeInput.addEventListener("input", () => {
+    connectBtn.disabled = codeInput.value.length !== 6;
   });
-}
 
-async function renderPage(html,baseUrl){
-  const doc=new DOMParser().parseFromString(html,"text/html");
-  const base=new URL(baseUrl);
+  connectBtn.onclick = () => {
+    const target = codeInput.value.trim();
+    if (!target || !peer) return;
+    conn = peer.connect(target);
+    conn.on('open', showConnectedUI);
+    conn.on('data', onData);
+  };
 
-  // remove scripts
-  doc.querySelectorAll("script").forEach(s=>s.remove());
-
-  for(const el of doc.querySelectorAll("[href]")){
-    const h=el.getAttribute("href");
-    if(!h) continue;
-    const abs=new URL(h,base).href;
-    el.removeAttribute("href");
-    el.style.cursor="pointer";
-    el.onclick=()=>requestUrl(abs);
+  function setupPeer(id) {
+    if (peer) peer.destroy();
+    peer = new Peer(id);
+    peer.on('connection', c => {
+      conn = c;
+      c.on('open', showConnectedUI);
+      c.on('data', onData);
+    });
   }
 
-  for(const el of doc.querySelectorAll("[src]")){
-    const s=el.getAttribute("src");
-    if(!s) continue;
-    const abs=new URL(s,base).href;
-    const blobUrl=await proxyUrl(abs);
-    el.setAttribute("src",blobUrl);
+  function proxy(url) {
+    return "https://corsproxy.io/?" + encodeURIComponent(url);
   }
 
-  shadowRoot.innerHTML="";
-  shadowRoot.appendChild(doc.body);
-}
+  async function onData(data) {
+    if (role === 'phone' && data.type === 'fetch') {
+      try {
+        const res = await fetch(proxy(data.url));
+        const text = await res.text();
+        conn.send({type:'html', html:text, base:data.url});
+      } catch(e) {
+        conn.send({type:'html', html:'<pre>Error: '+e+'</pre>', base:data.url});
+      }
+    }
+    if (role === 'computer' && data.type === 'html') {
+      render(data.html, data.base);
+    }
+  }
 
-if(role==="phone"){
-  myCode=localStorage.getItem("phoneCode")||String(Math.floor(100000+Math.random()*900000));
-  localStorage.setItem("phoneCode",myCode);
-  phoneCodeEl.textContent=myCode;
-  initPeer(myCode);
-  showPhoneCode();
-}else{
-  initPeer();
-  showComputer();
-}
+  function render(html, baseUrl) {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const base = new URL(baseUrl);
 
-codeInput.oninput=()=>connectBtn.disabled=codeInput.value.length!==6;
-connectBtn.onclick=()=>{conn=peer.connect(codeInput.value);wireConn();};
+    doc.querySelectorAll('[href]').forEach(el => {
+      const v = el.getAttribute('href');
+      if (v && !v.startsWith('http')) el.setAttribute('href', new URL(v, base).href);
+      el.onclick = e => { e.preventDefault(); urlInput.value = el.href; sendBtn.click(); };
+    });
 
-sendBtn.onclick=()=>requestUrl(urlInput.value);
-resetCodeBtn.onclick=()=>{localStorage.removeItem("phoneCode");location.reload();};
-disconnectBtn.onclick=()=>conn&&conn.close();
+    doc.querySelectorAll('[src]').forEach(el => {
+      const v = el.getAttribute('src');
+      if (v && !v.startsWith('http')) el.setAttribute('src', new URL(v, base).href);
+      el.setAttribute('src', proxy(el.src));
+    });
 
+    const sandbox = document.createElement('iframe');
+    sandbox.sandbox = "allow-same-origin allow-scripts allow-forms";
+    sandbox.srcdoc = "<base href='"+base.href+"'>" + doc.documentElement.outerHTML;
+
+    browserEl.innerHTML = "";
+    browserEl.appendChild(sandbox);
+  }
+
+  sendBtn.onclick = () => {
+    const url = urlInput.value.trim();
+    if (!url || !conn) return;
+    conn.send({type:'fetch', url});
+  };
+
+  if (role === 'phone') showPhoneUI(); else showComputerUI();
 })();
 </script>
 </body>
