@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Site Fetcher</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 0; padding: 0;
+    }
+    #content {
+      padding: 20px;
+    }
+    iframe {
+      width: 100%;
+      height: 100vh;
+      border: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="content">Loading...</div>
+
+  <script>
+    // Get the URL to fetch from the query param ?url=
+    function getUrlParam(name) {
+      const params = new URLSearchParams(window.location.search);
+      return params.get(name);
+    }
+
+    // Resolve relative URL against base URL
+    function resolveUrl(base, relative) {
+      try {
+        return new URL(relative, base).href;
+      } catch {
+        return relative;
+      }
+    }
+
+    async function fetchAndRender(url) {
+      if (!url) {
+        document.getElementById('content').innerHTML = `
+          <h2>No URL specified</h2>
+          <p>Use ?url=YOUR_URL to fetch a site.</p>
+          <p>Example: <a href="?url=https://example.com">Fetch example.com</a></p>
+        `;
+        return;
+      }
+
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
+
+        const text = await res.text();
+
+        // Parse the fetched HTML
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(text, 'text/html');
+
+        // Set base URL for relative resolving
+        const baseUrl = url;
+
+        // Rewrite all links and resources to point back to this page with ?url=absoluteUrl
+        function rewriteAttr(selector, attr) {
+          doc.querySelectorAll(selector).forEach(el => {
+            const original = el.getAttribute(attr);
+            if (!original) return;
+
+            // Ignore javascript: or mailto:
+            if (original.startsWith('javascript:') || original.startsWith('mailto:') || original.startsWith('#')) return;
+
+            const absoluteUrl = resolveUrl(baseUrl, original);
+            if (attr === 'href' || attr === 'src') {
+              // For <a> tags, rewrite href to this page with ?url=absoluteUrl
+              if (el.tagName.toLowerCase() === 'a' && attr === 'href') {
+                el.setAttribute('href', `?url=${encodeURIComponent(absoluteUrl)}`);
+              } else {
+                // For src or href (like img, script, link), we keep absolute URLs to load resources directly
+                el.setAttribute(attr, absoluteUrl);
+              }
+            }
+          });
+        }
+
+        // Rewrite tags
+        rewriteAttr('a', 'href');
+        rewriteAttr('img', 'src');
+        rewriteAttr('script', 'src');
+        rewriteAttr('link[rel="stylesheet"]', 'href');
+        rewriteAttr('iframe', 'src');
+
+        // Remove base tag if present (could mess with relative URLs)
+        const baseTag = doc.querySelector('base');
+        if (baseTag) baseTag.remove();
+
+        // Inject fetched and rewritten HTML into this page
+        const contentDiv = document.getElementById('content');
+        contentDiv.innerHTML = '';
+        Array.from(doc.head.children).forEach(node => {
+          // Import stylesheets and meta tags from head
+          if (node.tagName.toLowerCase() === 'style' || (node.tagName.toLowerCase() === 'link' && node.rel === 'stylesheet') || node.tagName.toLowerCase() === 'meta' || node.tagName.toLowerCase() === 'title') {
+            document.head.appendChild(node.cloneNode(true));
+          }
+        });
+
+        // Append body content
+        Array.from(doc.body.children).forEach(node => {
+          contentDiv.appendChild(node.cloneNode(true));
+        });
+
+      } catch (e) {
+        document.getElementById('content').innerHTML = `<p style="color:red;">Error: ${e.message}</p>`;
+      }
+    }
+
+    // Start
+    const siteUrl = getUrlParam('url');
+    fetchAndRender(siteUrl);
+  </script>
+</body>
+</html>
