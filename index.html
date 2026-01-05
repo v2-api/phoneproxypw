@@ -147,17 +147,8 @@
   let conn = null;
   let myCode = null;
   let role = /Mobi|Android/i.test(navigator.userAgent) ? 'phone' : 'computer';
-  let connectTime = null, uptimeTimer = null;
-
-  function getOrCreateCode(reset=false) {
-    if (!reset && myCode) return myCode;
-    if (!reset) myCode = localStorage.getItem("phoneCode");
-    if (!myCode || reset) {
-      myCode = String(Math.floor(100000 + Math.random() * 900000));
-      localStorage.setItem("phoneCode", myCode);
-    }
-    return myCode;
-  }
+  let connectTime = null;
+  let uptimeTimer = null;
 
   function resetUI() {
     phoneUI.style.display = "none";
@@ -165,23 +156,55 @@
     connectedUI.style.display = "none";
   }
 
+  function createPeer(id) {
+    if (peer) return;
+
+    peer = new Peer(id);
+    peer.on('open', pid => {
+      console.log("Peer open:", pid);
+      if (role === 'phone') {
+        phoneCodeEl.textContent = pid;
+      }
+    });
+
+    peer.on('connection', dc => {
+      conn = dc;
+      wireConn(dc);
+    });
+
+    peer.on('error', err => {
+      console.error("Peer error:", err);
+      alert("Peer error: " + err.type);
+    });
+  }
+
+  function wireConn(dc) {
+    conn = dc;
+    dc.on('open', onConnected);
+    dc.on('data', onData);
+    dc.on('close', onDisconnected);
+    dc.on('error', e => console.error("Conn error", e));
+  }
+
   function showPhoneUI() {
     role = 'phone';
     resetUI();
     phoneUI.style.display = "block";
 
-    // ✅ Always update 6-digit code
-    const code = getOrCreateCode();
-    phoneCodeEl.textContent = code;
+    if (!myCode) {
+      myCode = localStorage.getItem("phoneCode") || String(Math.floor(100000 + Math.random() * 900000));
+      localStorage.setItem("phoneCode", myCode);
+    }
 
-    setupPeer(code);
+    phoneCodeEl.textContent = myCode;
+    createPeer(myCode);
   }
 
   function showComputerUI() {
     role = 'computer';
     resetUI();
     computerUI.style.display = "block";
-    setupPeer();
+    createPeer();
   }
 
   function showConnectedUI() {
@@ -189,13 +212,16 @@
     if (role === 'computer') connectedUI.style.display = "flex";
   }
 
-  switchToComputer.onclick = () => showComputerUI();
-  switchToPhone.onclick = () => showPhoneUI();
+  switchToComputer.onclick = showComputerUI;
+  switchToPhone.onclick = showPhoneUI;
 
   resetCodeBtn.onclick = () => {
-    const code = getOrCreateCode(true);
-    phoneCodeEl.textContent = code;
-    setupPeer(code);
+    myCode = String(Math.floor(100000 + Math.random() * 900000));
+    localStorage.setItem("phoneCode", myCode);
+    if (peer) peer.destroy();
+    peer = null;
+    createPeer(myCode);
+    phoneCodeEl.textContent = myCode;
   };
 
   codeInput.addEventListener("input", () => {
@@ -203,70 +229,49 @@
   });
 
   connectBtn.onclick = () => {
-    if (!peer) return;
+    if (!peer || !peer.open) return alert("Peer not ready yet.");
     const target = codeInput.value.trim();
     if (!target) return;
-    if (target === myCode) return alert("Cannot connect to your own code!");
-    connectBtn.disabled = true;
-    const dc = peer.connect(target, {reliable:true});
-    dc.on('open', () => onConnected(dc));
-    dc.on('data', onData);
-    dc.on('close', onDisconnected);
-    dc.on('error', err => { alert("Connection error: " + err); connectBtn.disabled = false; });
-    codeInput.value = "";
+    if (target === myCode) return alert("Cannot connect to your own code.");
+
+    const dc = peer.connect(target, { reliable: true });
+    wireConn(dc);
     connectBtn.disabled = true;
   };
 
-  function setupPeer(id) {
-    if (peer) { try { peer.destroy(); } catch(e) {} peer = null; }
-    peer = new Peer(id);
-    peer.on('connection', dc => {
-      conn = dc;
-      dc.on('open', () => onConnected(dc));
-      dc.on('data', onData);
-      dc.on('close', onDisconnected);
-    });
-    peer.on('error', err => { console.error("Peer error", err); });
-  }
-
-  function onConnected(dc) {
-    conn = dc;
+  function onConnected() {
     connectTime = Date.now();
 
     if (role === 'computer') {
-      showConnectedUI(); 
+      showConnectedUI();
     } else {
       phoneStatus.textContent = "Connected ✓";
-      if (uptimeTimer) clearInterval(uptimeTimer);
       uptimeTimer = setInterval(() => {
-        const sec = Math.floor((Date.now() - connectTime)/1000);
-        phoneStatus.textContent = `Connected ✓ – Uptime ${sec}s`;
+        const s = Math.floor((Date.now() - connectTime) / 1000);
+        phoneStatus.textContent = `Connected ✓ – Uptime ${s}s`;
       }, 1000);
     }
-    connectBtn.disabled = false;
   }
 
   function onDisconnected() {
-    resetUI();
     if (uptimeTimer) clearInterval(uptimeTimer);
+    conn = null;
     (role === 'phone') ? showPhoneUI() : showComputerUI();
   }
 
   async function onData(data) {
-    if (role === 'computer') {
-      if (data.type === 'fetch-response') {
-        renderPage(data.bodyText, urlInput.value);
-      }
-    } else if (role === 'phone') {
-      if (data.type === 'fetch-request') {
-        try {
-          const proxied = "https://corsproxy.io/?" + encodeURIComponent(data.url);
-          const r = await fetch(proxied);
-          const text = await r.text();
-          conn.send({type:'fetch-response', bodyText:text});
-        } catch(e) {
-          conn.send({type:'fetch-response', bodyText:"Error: "+String(e)});
-        }
+    if (role === 'computer' && data.type === 'fetch-response') {
+      renderPage(data.bodyText, urlInput.value);
+    }
+
+    if (role === 'phone' && data.type === 'fetch-request') {
+      try {
+        const proxied = "https://corsproxy.io/?" + encodeURIComponent(data.url);
+        const r = await fetch(proxied);
+        const text = await r.text();
+        conn.send({ type: 'fetch-response', bodyText: text });
+      } catch (e) {
+        conn.send({ type: 'fetch-response', bodyText: "Error: " + e.toString() });
       }
     }
   }
@@ -276,25 +281,21 @@
     const base = new URL(baseUrl);
 
     doc.querySelectorAll("[href]").forEach(el => {
-      const val = el.getAttribute("href");
-      if (val && !val.startsWith("http") && !val.startsWith("#")) {
-        el.setAttribute("href", new URL(val, base).href);
-      }
-      el.addEventListener("click", e => {
+      const v = el.getAttribute("href");
+      if (v && !v.startsWith("http") && !v.startsWith("#"))
+        el.setAttribute("href", new URL(v, base).href);
+
+      el.onclick = e => {
         e.preventDefault();
-        const href = el.getAttribute("href");
-        if (href) {
-          urlInput.value = href;
-          sendBtn.click();
-        }
-      });
+        urlInput.value = el.href;
+        sendBtn.click();
+      };
     });
 
     doc.querySelectorAll("[src]").forEach(el => {
-      const val = el.getAttribute("src");
-      if (val && !val.startsWith("http")) {
-        el.setAttribute("src", new URL(val, base).href);
-      }
+      const v = el.getAttribute("src");
+      if (v && !v.startsWith("http"))
+        el.setAttribute("src", new URL(v, base).href);
     });
 
     browserEl.innerHTML = "";
@@ -302,16 +303,20 @@
   }
 
   sendBtn.onclick = () => {
+    if (!conn || !conn.open) return alert("Not connected.");
     const url = urlInput.value.trim();
     if (!url) return;
-    conn.send({type:'fetch-request', url});
     browserEl.textContent = "Fetching...";
+    conn.send({ type: 'fetch-request', url });
   };
 
-  urlInput.addEventListener("keypress", e => { if (e.key === "Enter") sendBtn.click(); });
+  urlInput.addEventListener("keypress", e => {
+    if (e.key === "Enter") sendBtn.click();
+  });
 
-  if (role === 'phone') showPhoneUI(); else showComputerUI();
+  (role === 'phone') ? showPhoneUI() : showComputerUI();
 })();
 </script>
+
 </body>
 </html>
