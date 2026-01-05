@@ -1,122 +1,317 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Site Fetcher</title>
-  <style>
-    body {
-      font-family: sans-serif;
-      margin: 0; padding: 0;
-    }
-    #content {
-      padding: 20px;
-    }
-    iframe {
-      width: 100%;
-      height: 100vh;
-      border: none;
-    }
-  </style>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Phone Proxy</title>
+<script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+<style>
+  body {
+    margin:0;
+    background:#121212;
+    color:#eee;
+    font-family: system-ui, sans-serif;
+    text-align:center;
+  }
+
+  .centerBox {
+    position:absolute;
+    top:50%;
+    left:50%;
+    transform:translate(-50%, -50%);
+    background:#1e1e1e;
+    border:1px solid #333;
+    border-radius:12px;
+    padding:2rem;
+    width:90%;
+    max-width:380px;
+    box-shadow:0 4px 12px rgba(0,0,0,0.3);
+  }
+
+  h1 { font-size:1.4rem; margin-bottom:1rem; }
+
+  input, button {
+    font-size:1rem;
+    padding:0.6rem 0.8rem;
+    border-radius:8px;
+    border:1px solid #555;
+    margin:0.5rem 0;
+    background:#2a2a2a;
+    color:#eee;
+    width:100%;
+    box-sizing:border-box;
+  }
+
+  button {
+    background:#0b74de;
+    border:none;
+    cursor:pointer;
+  }
+  button:disabled { opacity:0.5; cursor:not-allowed; }
+  button:hover:enabled { background:#095ab0; }
+
+  .link { 
+    color:#4aa3ff; 
+    font-size:0.9rem; 
+    cursor:pointer; 
+    margin-top:0.8rem; 
+    display:inline-block; 
+  }
+
+  /* Connected UI */
+  #connectedUI {
+    display:none;
+    height:100vh;
+    width:100vw;
+    background:#111;
+    flex-direction:column;
+  }
+  #topbar {
+    display:flex;
+    padding:0.5rem;
+    background:#1e1e1e;
+    border-bottom:1px solid #333;
+  }
+  #urlInput {
+    flex:1;
+    padding:0.5rem;
+    font-size:1rem;
+    border-radius:6px;
+    border:1px solid #555;
+    background:#2a2a2a;
+    color:#eee;
+  }
+  #sendBtn {
+    margin-left:0.5rem;
+    padding:0.5rem 1rem;
+    background:#0b74de;
+    border:none;
+    border-radius:6px;
+    cursor:pointer;
+  }
+  #sendBtn:hover:enabled { background:#095ab0; }
+  #browser {
+    flex:1;
+    overflow:auto;
+    padding:1rem;
+    background:#111;
+    color:#eee;
+    text-align:left;
+  }
+</style>
 </head>
 <body>
-  <div id="content">Loading...</div>
+  <!-- Phone UI -->
+  <div class="centerBox" id="phoneUI" hidden>
+    <h1>Your Code</h1>
+    <div style="font-size:2rem; font-weight:bold; margin:1rem 0;" id="phoneCode">------</div>
+    <button id="resetCodeBtn">Reset Code</button>
+    <div id="phoneStatus" style="margin-top:0.6rem; font-size:0.9rem; color:#4aa3ff;"></div>
+    <div class="link" id="switchToComputer">I'm not on mobile</div>
+  </div>
 
-  <script>
-    // Get the URL to fetch from the query param ?url=
-    function getUrlParam(name) {
-      const params = new URLSearchParams(window.location.search);
-      return params.get(name);
+  <!-- Computer UI -->
+  <div class="centerBox" id="computerUI" hidden>
+    <h1>Enter Phone Code</h1>
+    <input id="codeInput" maxlength="6" placeholder="6-digit code"/>
+    <button id="connectBtn" disabled>Connect</button>
+    <div class="link" id="switchToPhone">I'm not on computer</div>
+  </div>
+
+  <!-- Connected Computer UI -->
+  <div id="connectedUI">
+    <div id="topbar">
+      <input id="urlInput" placeholder="Enter URL to fetch"/>
+      <button id="sendBtn">Go</button>
+    </div>
+    <div id="browser">Connected. Enter a URL above.</div>
+  </div>
+
+<script>
+(() => {
+  const phoneUI = document.getElementById('phoneUI');
+  const computerUI = document.getElementById('computerUI');
+  const connectedUI = document.getElementById('connectedUI');
+  const phoneCodeEl = document.getElementById('phoneCode');
+  const resetCodeBtn = document.getElementById('resetCodeBtn');
+  const phoneStatus = document.getElementById('phoneStatus');
+  const switchToComputer = document.getElementById('switchToComputer');
+  const switchToPhone = document.getElementById('switchToPhone');
+  const codeInput = document.getElementById('codeInput');
+  const connectBtn = document.getElementById('connectBtn');
+  const urlInput = document.getElementById('urlInput');
+  const sendBtn = document.getElementById('sendBtn');
+  const browserEl = document.getElementById('browser');
+
+  let peer = null;
+  let conn = null;
+  let myCode = null;
+  let role = /Mobi|Android/i.test(navigator.userAgent) ? 'phone' : 'computer';
+  let connectTime = null, uptimeTimer = null;
+
+  function getOrCreateCode(reset=false) {
+    if (!reset && myCode) return myCode;
+    if (!reset) myCode = localStorage.getItem("phoneCode");
+    if (!myCode || reset) {
+      myCode = String(Math.floor(100000 + Math.random() * 900000));
+      localStorage.setItem("phoneCode", myCode);
     }
+    return myCode;
+  }
 
-    // Resolve relative URL against base URL
-    function resolveUrl(base, relative) {
-      try {
-        return new URL(relative, base).href;
-      } catch {
-        return relative;
-      }
+  function resetUI() {
+    phoneUI.style.display = "none";
+    computerUI.style.display = "none";
+    connectedUI.style.display = "none";
+  }
+
+  function showPhoneUI() {
+    role = 'phone';
+    resetUI();
+    phoneUI.style.display = "block";
+
+    // ✅ Always update 6-digit code
+    const code = getOrCreateCode();
+    phoneCodeEl.textContent = code;
+
+    setupPeer(code);
+  }
+
+  function showComputerUI() {
+    role = 'computer';
+    resetUI();
+    computerUI.style.display = "block";
+    setupPeer();
+  }
+
+  function showConnectedUI() {
+    resetUI();
+    if (role === 'computer') connectedUI.style.display = "flex";
+  }
+
+  switchToComputer.onclick = () => showComputerUI();
+  switchToPhone.onclick = () => showPhoneUI();
+
+  resetCodeBtn.onclick = () => {
+    const code = getOrCreateCode(true);
+    phoneCodeEl.textContent = code;
+    setupPeer(code);
+  };
+
+  codeInput.addEventListener("input", () => {
+    connectBtn.disabled = codeInput.value.trim().length !== 6;
+  });
+
+  connectBtn.onclick = () => {
+    if (!peer) return;
+    const target = codeInput.value.trim();
+    if (!target) return;
+    if (target === myCode) return alert("Cannot connect to your own code!");
+    connectBtn.disabled = true;
+    const dc = peer.connect(target, {reliable:true});
+    dc.on('open', () => onConnected(dc));
+    dc.on('data', onData);
+    dc.on('close', onDisconnected);
+    dc.on('error', err => { alert("Connection error: " + err); connectBtn.disabled = false; });
+    codeInput.value = "";
+    connectBtn.disabled = true;
+  };
+
+  function setupPeer(id) {
+    if (peer) { try { peer.destroy(); } catch(e) {} peer = null; }
+    peer = new Peer(id);
+    peer.on('connection', dc => {
+      conn = dc;
+      dc.on('open', () => onConnected(dc));
+      dc.on('data', onData);
+      dc.on('close', onDisconnected);
+    });
+    peer.on('error', err => { console.error("Peer error", err); });
+  }
+
+  function onConnected(dc) {
+    conn = dc;
+    connectTime = Date.now();
+
+    if (role === 'computer') {
+      showConnectedUI(); 
+    } else {
+      phoneStatus.textContent = "Connected ✓";
+      if (uptimeTimer) clearInterval(uptimeTimer);
+      uptimeTimer = setInterval(() => {
+        const sec = Math.floor((Date.now() - connectTime)/1000);
+        phoneStatus.textContent = `Connected ✓ – Uptime ${sec}s`;
+      }, 1000);
     }
+    connectBtn.disabled = false;
+  }
 
-    async function fetchAndRender(url) {
-      if (!url) {
-        document.getElementById('content').innerHTML = `
-          <h2>No URL specified</h2>
-          <p>Use ?url=YOUR_URL to fetch a site.</p>
-          <p>Example: <a href="?url=https://example.com">Fetch example.com</a></p>
-        `;
-        return;
+  function onDisconnected() {
+    resetUI();
+    if (uptimeTimer) clearInterval(uptimeTimer);
+    (role === 'phone') ? showPhoneUI() : showComputerUI();
+  }
+
+  async function onData(data) {
+    if (role === 'computer') {
+      if (data.type === 'fetch-response') {
+        renderPage(data.bodyText, urlInput.value);
       }
-
-      try {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
-
-        const text = await res.text();
-
-        // Parse the fetched HTML
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(text, 'text/html');
-
-        // Set base URL for relative resolving
-        const baseUrl = url;
-
-        // Rewrite all links and resources to point back to this page with ?url=absoluteUrl
-        function rewriteAttr(selector, attr) {
-          doc.querySelectorAll(selector).forEach(el => {
-            const original = el.getAttribute(attr);
-            if (!original) return;
-
-            // Ignore javascript: or mailto:
-            if (original.startsWith('javascript:') || original.startsWith('mailto:') || original.startsWith('#')) return;
-
-            const absoluteUrl = resolveUrl(baseUrl, original);
-            if (attr === 'href' || attr === 'src') {
-              // For <a> tags, rewrite href to this page with ?url=absoluteUrl
-              if (el.tagName.toLowerCase() === 'a' && attr === 'href') {
-                el.setAttribute('href', `?url=${encodeURIComponent(absoluteUrl)}`);
-              } else {
-                // For src or href (like img, script, link), we keep absolute URLs to load resources directly
-                el.setAttribute(attr, absoluteUrl);
-              }
-            }
-          });
+    } else if (role === 'phone') {
+      if (data.type === 'fetch-request') {
+        try {
+          const proxied = "https://corsproxy.io/?" + encodeURIComponent(data.url);
+          const r = await fetch(proxied);
+          const text = await r.text();
+          conn.send({type:'fetch-response', bodyText:text});
+        } catch(e) {
+          conn.send({type:'fetch-response', bodyText:"Error: "+String(e)});
         }
-
-        // Rewrite tags
-        rewriteAttr('a', 'href');
-        rewriteAttr('img', 'src');
-        rewriteAttr('script', 'src');
-        rewriteAttr('link[rel="stylesheet"]', 'href');
-        rewriteAttr('iframe', 'src');
-
-        // Remove base tag if present (could mess with relative URLs)
-        const baseTag = doc.querySelector('base');
-        if (baseTag) baseTag.remove();
-
-        // Inject fetched and rewritten HTML into this page
-        const contentDiv = document.getElementById('content');
-        contentDiv.innerHTML = '';
-        Array.from(doc.head.children).forEach(node => {
-          // Import stylesheets and meta tags from head
-          if (node.tagName.toLowerCase() === 'style' || (node.tagName.toLowerCase() === 'link' && node.rel === 'stylesheet') || node.tagName.toLowerCase() === 'meta' || node.tagName.toLowerCase() === 'title') {
-            document.head.appendChild(node.cloneNode(true));
-          }
-        });
-
-        // Append body content
-        Array.from(doc.body.children).forEach(node => {
-          contentDiv.appendChild(node.cloneNode(true));
-        });
-
-      } catch (e) {
-        document.getElementById('content').innerHTML = `<p style="color:red;">Error: ${e.message}</p>`;
       }
     }
+  }
 
-    // Start
-    const siteUrl = getUrlParam('url');
-    fetchAndRender(siteUrl);
-  </script>
+  function renderPage(html, baseUrl) {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const base = new URL(baseUrl);
+
+    doc.querySelectorAll("[href]").forEach(el => {
+      const val = el.getAttribute("href");
+      if (val && !val.startsWith("http") && !val.startsWith("#")) {
+        el.setAttribute("href", new URL(val, base).href);
+      }
+      el.addEventListener("click", e => {
+        e.preventDefault();
+        const href = el.getAttribute("href");
+        if (href) {
+          urlInput.value = href;
+          sendBtn.click();
+        }
+      });
+    });
+
+    doc.querySelectorAll("[src]").forEach(el => {
+      const val = el.getAttribute("src");
+      if (val && !val.startsWith("http")) {
+        el.setAttribute("src", new URL(val, base).href);
+      }
+    });
+
+    browserEl.innerHTML = "";
+    browserEl.appendChild(doc.body);
+  }
+
+  sendBtn.onclick = () => {
+    const url = urlInput.value.trim();
+    if (!url) return;
+    conn.send({type:'fetch-request', url});
+    browserEl.textContent = "Fetching...";
+  };
+
+  urlInput.addEventListener("keypress", e => { if (e.key === "Enter") sendBtn.click(); });
+
+  if (role === 'phone') showPhoneUI(); else showComputerUI();
+})();
+</script>
 </body>
 </html>
