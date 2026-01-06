@@ -5,17 +5,20 @@
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>Phone Proxy</title>
 
-<script src="/peer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.4.7/dist/peerjs.min.js"></script>
 
 <style>
-body {
+/* App CSS is now scoped */
+.phoneproxy-app {
   margin:0;
   background:#121212;
   color:#eee;
   font-family:system-ui,sans-serif;
   text-align:center;
+  height:100vh;
 }
-.centerBox {
+
+.phoneproxy-app .centerBox {
   position:absolute;
   top:50%;
   left:50%;
@@ -28,19 +31,22 @@ body {
   max-width:380px;
   box-shadow:0 4px 12px rgba(0,0,0,0.3);
 }
-#connectedUI {
+
+.phoneproxy-app #connectedUI {
   display:none;
-  height:100vh;
+  height:100%;
   flex-direction:column;
 }
-#topbar {
+
+.phoneproxy-app #topbar {
   display:flex;
   gap:0.5rem;
   padding:0.5rem;
   background:#1e1e1e;
   border-bottom:1px solid #333;
 }
-#urlInput {
+
+.phoneproxy-app #urlInput {
   flex:1;
   padding:0.5rem;
   border-radius:6px;
@@ -48,7 +54,8 @@ body {
   background:#2a2a2a;
   color:#eee;
 }
-#sendBtn {
+
+.phoneproxy-app #sendBtn {
   padding:0.45rem 0.8rem;
   border-radius:6px;
   border:none;
@@ -56,14 +63,17 @@ body {
   color:white;
   cursor:pointer;
 }
-#browserHost {
+
+.phoneproxy-app #browserHost {
   flex:1;
   overflow:auto;
   background:#fff;
 }
 </style>
 </head>
+
 <body>
+<div class="phoneproxy-app">
 
 <div class="centerBox" id="phoneUI" hidden>
   <h1>Your Code</h1>
@@ -93,6 +103,8 @@ body {
     <button id="sendBtn">Go</button>
   </div>
   <div id="browserHost"></div>
+</div>
+
 </div>
 
 <script>
